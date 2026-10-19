@@ -34,6 +34,19 @@ try { best = +localStorage.getItem('orbrush-best') || 0; } catch(e) {}
 
 const rand = (a,b) => a + Math.random()*(b-a);
 
+// ---- Sound beeps and floating score text ----
+let ac, pops = [];
+function beep(f, d, type){
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    g.gain.value = .08; g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + d);
+    o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+  } catch(e) {}
+}
+function pop(px, py, s, col){ pops.push({x:px, y:py, s, col, life:1}); }
+
 function press(){
   if (state === 'play') return;
   if (state === 'over' && performance.now() - overAt < 600) return;
@@ -41,6 +54,7 @@ function press(){
 }
 
 function start(){
+  pops = [];
   p = {x:mx, y:my, r:12};
   orbs = []; haz = []; parts = []; rings = [];
   score = 0; combo = 1; comboT = 0; t = 0; spawnO = 0; spawnH = 1; collected = 0; shake = 0;
@@ -56,6 +70,7 @@ function burst(px, py, col, n){
 
 function die(){
   state = 'over'; overAt = performance.now(); shake = 22;
+  beep(90, .5, 'sawtooth');
   burst(p.x, p.y, '#fff', 60);
   if (score > best){
     best = Math.floor(score);
@@ -69,6 +84,8 @@ function update(dt){
   parts = parts.filter(q => q.life > 0);
   for (const r of rings){ r.r += 900*dt; r.a -= dt*1.6; }
   rings = rings.filter(r => r.a > 0);
+  for (const f of pops) f.life -= dt*1.2;
+  pops = pops.filter(f => f.life > 0);
   shake *= .9;
   if (state !== 'play') return;
 
@@ -100,7 +117,12 @@ function update(dt){
   // hazards
   for (const h of haz){
     h.x += h.vx*dt; h.y += h.vy*dt;
-    if (Math.hypot(h.x-p.x, h.y-p.y) < h.r + p.r - 3){ die(); return; }
+    const d = Math.hypot(h.x-p.x, h.y-p.y);
+    if (d < h.r + p.r - 3){ die(); return; }
+    if (!h.near && d < h.r + p.r + 22){   // near miss = risky bonus
+      h.near = true; score += 25 * combo; comboT = 3;
+      pop(p.x, p.y - 30, 'CLOSE! +' + 25*combo, '#ff9ff3'); beep(900, .1, 'square');
+    }
   }
   haz = haz.filter(h => h.x > -80 && h.x < W+80 && h.y > -80 && h.y < H+80);
 
@@ -109,13 +131,17 @@ function update(dt){
     o.life -= dt;
     if (Math.hypot(o.x-p.x, o.y-p.y) < o.r + p.r + 6){
       o.life = 0;
-      score += 10 * combo;
+      const gain = 10 * combo;
+      score += gain;
+      pop(o.x, o.y, '+' + gain, '#ffd34d');
       combo = Math.min(10, combo + 1);
       comboT = 3;
       collected++;
       burst(o.x, o.y, '#ffd34d', 14);
+      beep(300 + combo*60, .12);
       if (collected % 8 === 0){            // POWER PULSE: wipes every hazard
         rings.push({r:0, a:1});
+        beep(120, .4, 'sawtooth'); pop(p.x, p.y - 50, 'PULSE!', '#6cf');
         for (const h of haz) burst(h.x, h.y, '#ff4d6d', 12);
         haz = [];
         score += 50 * combo;
@@ -159,6 +185,8 @@ function draw(){
     for (const h of haz) glowCircle(h.x, h.y, h.r, '#ff4d6d');
     for (const q of parts){ x.globalAlpha = Math.max(0, q.life); glowCircle(q.x, q.y, 3, q.col); }
     x.globalAlpha = 1;
+    for (const f of pops){ x.globalAlpha = Math.max(0, f.life); text(f.s, f.x, f.y - (1 - f.life)*40, 22, f.col); }
+    x.globalAlpha = 1;
     if (state === 'play') glowCircle(p.x, p.y, p.r, 'hsl(' + (180 + combo*18) + ',100%,65%)');
   }
 
@@ -176,7 +204,7 @@ function draw(){
   } else {
     text('GAME OVER', W/2, H/2 - 50, 56, '#ff4d6d');
     text('Score ' + Math.floor(score), W/2, H/2 + 5, 34);
-    text(Math.floor(score) >= best && score > 0 ? 'NEW BEST!' : 'Best ' + best, W/2, H/2 + 45, 24, '#ffd34d');
+    text(Math.floor(score) >= best && score > 0 ? 'NEW BEST!' : 'So close! Only ' + (best - Math.floor(score)) + ' short of your best', W/2, H/2 + 45, 24, '#ffd34d');
     text('Tap or press Space to go again', W/2, H/2 + 90, 18, '#889');
   }
 }
