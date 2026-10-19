@@ -27,10 +27,10 @@ addEventListener('mousedown', press);
 addEventListener('keydown', e => { if (e.code === 'Space' || e.key === 'Enter') press(); });
 
 // ---- Game state ----
-let state = 'menu', overAt = 0, last = 0;
+let state = 'menu', overAt = 0, last = 0, runs = 0, slow = 0, beat = false;
 let p, orbs, haz, parts, rings, warns = [];
 let score, combo, comboT, t, spawnO, spawnH, collected, shake, best = 0;
-try { best = +localStorage.getItem('orbrush-best') || 0; } catch(e) {}
+try { best = +localStorage.getItem('orbrush-best') || 0; runs = +localStorage.getItem('orbrush-runs') || 0; } catch(e) {}
 
 const rand = (a,b) => a + Math.random()*(b-a);
 
@@ -47,6 +47,24 @@ function beep(f, d, type){
 }
 function pop(px, py, s, col){ pops.push({x:px, y:py, s, col, life:1}); }
 
+// a beep that slides from one pitch to another (used to build big sounds)
+function sweep(f1, f2, d, type, vol){
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain(), n = ac.currentTime;
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(f1, n); o.frequency.exponentialRampToValueAtTime(f2, n + d);
+    g.gain.setValueAtTime(vol || .12, n); g.gain.exponentialRampToValueAtTime(.001, n + d);
+    o.connect(g); g.connect(ac.destination); o.start(n); o.stop(n + d);
+  } catch(e) {}
+}
+// deep boom + rising whoosh + sparkly notes = satisfying blast
+function pulseSfx(){
+  sweep(180, 30, .6, 'sine', .3);
+  sweep(200, 1400, .3, 'sawtooth', .08);
+  [784, 988, 1175, 1568, 1976].forEach((f, i) => setTimeout(() => beep(f, .25, 'triangle'), 120 + i*60));
+}
+
 function press(){
   if (state === 'play') return;
   if (state === 'over' && performance.now() - overAt < 600) return;
@@ -54,7 +72,7 @@ function press(){
 }
 
 function start(){
-  pops = []; warns = [];
+  pops = []; warns = []; beat = false;
   p = {x:mx, y:my, r:12};
   orbs = []; haz = []; parts = []; rings = [];
   score = 0; combo = 1; comboT = 0; t = 0; spawnO = 0; spawnH = 1; collected = 0; shake = 0;
@@ -71,6 +89,8 @@ function burst(px, py, col, n){
 function die(){
   state = 'over'; overAt = performance.now(); shake = 22;
   beep(90, .5, 'sawtooth');
+  runs++;
+  try { localStorage.setItem('orbrush-runs', runs); } catch(e) {}
   burst(p.x, p.y, '#fff', 60);
   if (score > best){
     best = Math.floor(score);
@@ -97,7 +117,8 @@ function update(dt){
   spawnO -= dt;
   if (spawnO <= 0 && orbs.length < 5){
     spawnO = .8;
-    orbs.push({x:rand(40, W-40), y:rand(70, H-40), r:10, life:4});
+    const jp = Math.random() < .12;   // rare pink jackpot orb
+    orbs.push({x:rand(40, W-40), y:rand(70, H-40), r:jp ? 15 : 10, life:jp ? 3 : 4, jp});
   }
 
   // spawn hazards (faster and faster)
@@ -136,11 +157,13 @@ function update(dt){
   // orbs
   for (const o of orbs){
     o.life -= dt;
+    if (Math.hypot(p.x - o.x, p.y - o.y) < 130){ o.x += (p.x - o.x) * dt * 5; o.y += (p.y - o.y) * dt * 5; }   // magnet
     if (Math.hypot(o.x-p.x, o.y-p.y) < o.r + p.r + 6){
       o.life = 0;
-      const gain = 10 * combo;
+      const gain = (o.jp ? 50 : 10) * combo * (combo === 10 ? 2 : 1);
       score += gain;
-      pop(o.x, o.y, '+' + gain, '#ffd34d');
+      pop(o.x, o.y, (o.jp ? 'JACKPOT +' : '+') + gain, o.jp ? '#ff9ff3' : '#ffd34d');
+      if (o.jp){ burst(o.x, o.y, '#ff9ff3', 30); beep(1320, .3, 'triangle'); shake = 8; }
       combo = Math.min(10, combo + 1);
       comboT = 3;
       collected++;
@@ -148,15 +171,19 @@ function update(dt){
       beep(300 + combo*60, .12);
       if (collected % 8 === 0){            // POWER PULSE: wipes every hazard
         rings.push({r:0, a:1});
-        beep(120, .4, 'sawtooth'); pop(p.x, p.y - 50, 'PULSE!', '#6cf');
+        pulseSfx(); slow = .5; pop(p.x, p.y - 50, 'PULSE!', '#6cf');
         for (const h of haz) burst(h.x, h.y, '#ff4d6d', 12);
         haz = [];
         score += 50 * combo;
-        shake = 14;
+        shake = 26;
       }
     }
   }
   orbs = orbs.filter(o => o.life > 0);
+
+  if (!beat && best > 0 && score > best){
+    beat = true; pop(p.x, p.y - 60, 'NEW BEST!', '#fff'); beep(1046, .3, 'triangle'); shake = 10;
+  }
 
   // combo runs out if you stop collecting
   if (comboT > 0){ comboT -= dt; if (comboT <= 0) combo = 1; }
@@ -187,7 +214,7 @@ function draw(){
   if (state !== 'menu'){
     for (const o of orbs){
       const pulse = 1 + Math.sin(performance.now()/120)*.18;
-      glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : '#ffd34d');
+      glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : (o.jp ? '#ff9ff3' : '#ffd34d'));
     }
     for (const w of warns){
       x.globalAlpha = .4 + .6*Math.abs(Math.sin(w.t*14));
@@ -199,14 +226,18 @@ function draw(){
     x.globalAlpha = 1;
     for (const f of pops){ x.globalAlpha = Math.max(0, f.life); text(f.s, f.x, f.y - (1 - f.life)*40, 22, f.col); }
     x.globalAlpha = 1;
-    if (state === 'play') glowCircle(p.x, p.y, p.r, 'hsl(' + (180 + combo*18) + ',100%,65%)');
+    if (state === 'play'){
+      const fever = combo === 10;
+      glowCircle(p.x, p.y, p.r + (fever ? 4 : 0), fever ? 'hsl(' + (performance.now()/4 % 360) + ',100%,65%)' : 'hsl(' + (180 + combo*18) + ',100%,65%)');
+    }
   }
 
   x.setTransform(1,0,0,1,0,0);
-  text('v3', W - 10, H - 10, 12, '#555', 'right');
+  text('v4', W - 10, H - 10, 12, '#555', 'right');
   if (state === 'play'){
     text(Math.floor(score), W/2, 60, 44);
-    text('x' + combo, W/2, 95, 24, combo > 1 ? '#ffd34d' : '#888');
+    text(combo === 10 ? 'FEVER! DOUBLE POINTS' : 'x' + combo, W/2, 95, 24, combo > 1 ? '#ffd34d' : '#888');
+    text('BEST ' + best, 16, 28, 16, '#667', 'left');
     x.fillStyle = '#ffd34d'; x.fillRect(W/2 - 60, 108, 120*Math.max(0, comboT)/3, 5);
     const ch = collected % 8;
     x.fillStyle = '#223'; x.fillRect(W/2 - 100, H - 40, 200, 10);
@@ -224,11 +255,13 @@ function draw(){
     text('Score ' + Math.floor(score), W/2, H/2 + 5, 34);
     text(Math.floor(score) >= best && score > 0 ? 'NEW BEST!' : 'So close! Only ' + (best - Math.floor(score)) + ' short of your best', W/2, H/2 + 45, 24, '#ffd34d');
     text('Tap or press Space to go again', W/2, H/2 + 90, 18, '#889');
+    text('Run #' + runs + '. The next one is the one!', W/2, H/2 + 120, 16, '#667');
   }
 }
 
 function loop(ts){
-  const dt = Math.min((ts - last)/1000, .05); last = ts;
+  let dt = Math.min((ts - last)/1000, .05); last = ts;
+  if (slow > 0){ slow -= dt; dt *= .25; }   // slow-motion after a pulse
   update(dt); draw();
   requestAnimationFrame(loop);
 }
