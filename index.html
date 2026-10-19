@@ -28,11 +28,33 @@ addEventListener('keydown', e => { if (e.code === 'Space' || e.key === 'Enter') 
 
 // ---- Game state ----
 let state = 'menu', overAt = 0, last = 0, runs = 0, slow = 0, beat = false;
+let xp = 0, goalIdx = 0, goalDone = false, jps = 0, nears = 0, pulses = 0, maxCombo = 1;
+let xpBonus = 0, gained = 0, leveled = false, shield = false, evT = 20, swarm = 0, banner = '', bannerT = 0;
 let p, orbs, haz, parts, rings, warns = [];
 let score, combo, comboT, t, spawnO, spawnH, collected, shake, best = 0;
-try { best = +localStorage.getItem('orbrush-best') || 0; runs = +localStorage.getItem('orbrush-runs') || 0; } catch(e) {}
+try { best = +localStorage.getItem('orbrush-best') || 0; runs = +localStorage.getItem('orbrush-runs') || 0;
+  xp = +localStorage.getItem('orbrush-xp') || 0; goalIdx = +localStorage.getItem('orbrush-goal') || 0; } catch(e) {}
 
 const rand = (a,b) => a + Math.random()*(b-a);
+
+// ---- Goals, levels and unlockable colors ----
+const goals = [
+  {txt:'Score 300',          ok:() => score >= 300},
+  {txt:'Collect 15 orbs',    ok:() => collected >= 15},
+  {txt:'Hit FEVER (x10)',    ok:() => maxCombo >= 10},
+  {txt:'Grab 2 jackpots',    ok:() => jps >= 2},
+  {txt:'Survive 60 seconds', ok:() => t >= 60},
+  {txt:'Trigger 2 pulses',   ok:() => pulses >= 2},
+  {txt:'5 near misses',      ok:() => nears >= 5},
+  {txt:'Score 1500',         ok:() => score >= 1500}
+];
+const skins = ['#6cf', '#ff9f43', '#a29bfe', '#55efc4', '#fd79a8', '#ffeaa7'];
+const level = v => Math.floor(Math.sqrt(v/150)) + 1;
+function xpBar(y){
+  const l = level(xp), a = 150*(l-1)*(l-1), b = 150*l*l;
+  x.fillStyle = '#223'; x.fillRect(W/2 - 100, y, 200, 8);
+  x.fillStyle = '#55efc4'; x.fillRect(W/2 - 100, y, 200*(xp - a)/(b - a), 8);
+}
 
 // ---- Sound beeps and floating score text ----
 let ac, pops = [];
@@ -73,6 +95,8 @@ function press(){
 
 function start(){
   pops = []; warns = []; beat = false;
+  goalDone = false; jps = 0; nears = 0; pulses = 0; maxCombo = 1; xpBonus = 0; leveled = false;
+  shield = false; evT = 20; swarm = 0; bannerT = 0;
   p = {x:mx, y:my, r:12};
   orbs = []; haz = []; parts = []; rings = [];
   score = 0; combo = 1; comboT = 0; t = 0; spawnO = 0; spawnH = 1; collected = 0; shake = 0;
@@ -91,6 +115,10 @@ function die(){
   beep(90, .5, 'sawtooth');
   runs++;
   try { localStorage.setItem('orbrush-runs', runs); } catch(e) {}
+  const before = level(xp);
+  gained = Math.floor(score/5) + xpBonus; xp += gained;
+  leveled = level(xp) > before;
+  try { localStorage.setItem('orbrush-xp', xp); } catch(e) {}
   burst(p.x, p.y, '#fff', 60);
   if (score > best){
     best = Math.floor(score);
@@ -118,13 +146,14 @@ function update(dt){
   if (spawnO <= 0 && orbs.length < 5){
     spawnO = .8;
     const jp = Math.random() < .12;   // rare pink jackpot orb
-    orbs.push({x:rand(40, W-40), y:rand(70, H-40), r:jp ? 15 : 10, life:jp ? 3 : 4, jp});
+    const sh = !jp && !shield && Math.random() < .1;   // rare cyan shield orb
+    orbs.push({x:rand(40, W-40), y:rand(70, H-40), r:jp ? 15 : 10, life:jp ? 3 : 4, jp, sh});
   }
 
   // spawn hazards (faster and faster)
   spawnH -= dt;
   if (spawnH <= 0){
-    spawnH = Math.max(.3, 1.3 - t*.02);
+    spawnH = (swarm > 0 ? .5 : 1) * Math.max(.3, 1.3 - t*.02);
     const e = Math.floor(rand(0,4)), sp = Math.min(280, 90 + t*2.5);
     let hx, hy;
     if (e === 0){ hx = -30; hy = rand(0,H); }
@@ -146,9 +175,17 @@ function update(dt){
   for (const h of haz){
     h.x += h.vx*dt; h.y += h.vy*dt;
     const d = Math.hypot(h.x-p.x, h.y-p.y);
-    if (d < h.r + p.r - 6){ die(); return; }
+    if (d < h.r + p.r - 6){
+      if (shield){
+        shield = false; h.x = -999; h.y = -999; h.vx = 0; h.vy = 0;
+        burst(p.x, p.y, '#6cf', 40); shake = 18; slow = .4; beep(200, .3, 'square');
+        pop(p.x, p.y - 40, 'SHIELD SAVED YOU!', '#6cf');
+        continue;
+      }
+      die(); return;
+    }
     if (!h.near && d < h.r + p.r + 22){   // near miss = risky bonus
-      h.near = true; score += 25 * combo; comboT = 3;
+      h.near = true; nears++; score += 25 * combo; comboT = 3;
       pop(p.x, p.y - 30, 'CLOSE! +' + 25*combo, '#ff9ff3'); beep(900, .1, 'square');
     }
   }
@@ -163,7 +200,8 @@ function update(dt){
       const gain = (o.jp ? 50 : 10) * combo * (combo === 10 ? 2 : 1);
       score += gain;
       pop(o.x, o.y, (o.jp ? 'JACKPOT +' : '+') + gain, o.jp ? '#ff9ff3' : '#ffd34d');
-      if (o.jp){ burst(o.x, o.y, '#ff9ff3', 30); beep(1320, .3, 'triangle'); shake = 8; }
+      if (o.sh){ shield = true; pop(o.x, o.y - 30, 'SHIELD!', '#6cf'); beep(500, .2, 'triangle'); }
+      if (o.jp){ jps++; burst(o.x, o.y, '#ff9ff3', 30); beep(1320, .3, 'triangle'); shake = 8; }
       combo = Math.min(10, combo + 1);
       comboT = 3;
       collected++;
@@ -171,7 +209,7 @@ function update(dt){
       beep(300 + combo*60, .12);
       if (collected % 8 === 0){            // POWER PULSE: wipes every hazard
         rings.push({r:0, a:1});
-        pulseSfx(); slow = .5; pop(p.x, p.y - 50, 'PULSE!', '#6cf');
+        pulses++; pulseSfx(); slow = .5; pop(p.x, p.y - 50, 'PULSE!', '#6cf');
         for (const h of haz) burst(h.x, h.y, '#ff4d6d', 12);
         haz = [];
         score += 50 * combo;
@@ -184,6 +222,29 @@ function update(dt){
   if (!beat && best > 0 && score > best){
     beat = true; pop(p.x, p.y - 60, 'NEW BEST!', '#fff'); beep(1046, .3, 'triangle'); shake = 10;
   }
+
+  // goal check: one goal can be finished per run, it pays bonus XP
+  maxCombo = Math.max(maxCombo, combo);
+  if (!goalDone && goals[goalIdx % goals.length].ok()){
+    goalDone = true; xpBonus += 200; goalIdx++;
+    try { localStorage.setItem('orbrush-goal', goalIdx); } catch(e) {}
+    pop(W/2, 150, 'GOAL COMPLETE! +200 XP', '#55efc4'); beep(880, .15, 'triangle');
+    setTimeout(() => beep(1320, .25, 'triangle'), 120);
+  }
+
+  // surprise event every ~22 seconds: orb rain or enemy swarm
+  evT -= dt;
+  if (evT <= 0){
+    evT = 22; bannerT = 2;
+    if (Math.random() < .5){
+      banner = 'ORB RAIN!'; beep(660, .2, 'triangle');
+      for (let i = 0; i < 10; i++) orbs.push({x:rand(40, W-40), y:rand(70, H-40), r:10, life:6});
+    } else {
+      banner = 'SWARM INCOMING!'; swarm = 7; beep(200, .4, 'sawtooth');
+    }
+  }
+  if (swarm > 0) swarm -= dt;
+  if (bannerT > 0) bannerT -= dt;
 
   // combo runs out if you stop collecting
   if (comboT > 0){ comboT -= dt; if (comboT <= 0) combo = 1; }
@@ -214,7 +275,7 @@ function draw(){
   if (state !== 'menu'){
     for (const o of orbs){
       const pulse = 1 + Math.sin(performance.now()/120)*.18;
-      glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : (o.jp ? '#ff9ff3' : '#ffd34d'));
+      glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : (o.jp ? '#ff9ff3' : o.sh ? '#6cf' : '#ffd34d'));
     }
     for (const w of warns){
       x.globalAlpha = .4 + .6*Math.abs(Math.sin(w.t*14));
@@ -228,16 +289,26 @@ function draw(){
     x.globalAlpha = 1;
     if (state === 'play'){
       const fever = combo === 10;
-      glowCircle(p.x, p.y, p.r + (fever ? 4 : 0), fever ? 'hsl(' + (performance.now()/4 % 360) + ',100%,65%)' : 'hsl(' + (180 + combo*18) + ',100%,65%)');
+      glowCircle(p.x, p.y, p.r + (fever ? 4 : 0), fever ? 'hsl(' + (performance.now()/4 % 360) + ',100%,65%)' : skins[(level(xp) - 1) % skins.length]);
+      if (shield){
+        x.strokeStyle = '#6cf'; x.lineWidth = 3;
+        x.beginPath(); x.arc(p.x, p.y, p.r + 10, 0, 6.283); x.stroke();
+      }
     }
   }
 
   x.setTransform(1,0,0,1,0,0);
-  text('v4', W - 10, H - 10, 12, '#555', 'right');
+  text('v5', W - 10, H - 10, 12, '#555', 'right');
   if (state === 'play'){
     text(Math.floor(score), W/2, 60, 44);
     text(combo === 10 ? 'FEVER! DOUBLE POINTS' : 'x' + combo, W/2, 95, 24, combo > 1 ? '#ffd34d' : '#888');
-    text('BEST ' + best, 16, 28, 16, '#667', 'left');
+    text('BEST ' + best + '   LVL ' + level(xp), 16, 28, 16, '#667', 'left');
+    text(goalDone ? 'GOAL COMPLETE!' : 'GOAL: ' + goals[goalIdx % goals.length].txt, 16, 50, 14, '#55efc4', 'left');
+    if (bannerT > 0){
+      x.globalAlpha = Math.min(1, bannerT);
+      text(banner, W/2, H/2 - 80, 40, banner === 'ORB RAIN!' ? '#ffd34d' : '#ff4d6d');
+      x.globalAlpha = 1;
+    }
     x.fillStyle = '#ffd34d'; x.fillRect(W/2 - 60, 108, 120*Math.max(0, comboT)/3, 5);
     const ch = collected % 8;
     x.fillStyle = '#223'; x.fillRect(W/2 - 100, H - 40, 200, 10);
@@ -250,12 +321,16 @@ function draw(){
     text('Every 8 orbs = PULSE: a blast that wipes out all red orbs!', W/2, H/2 + 65, 18, '#6cf');
     text('Watch for the red "!" marks: enemies appear there.', W/2, H/2 + 92, 16, '#ff4d6d');
     if (best) text('Best: ' + best, W/2, H/2 + 130, 22, '#ffd34d');
+    text('LVL ' + level(xp) + '   NEXT GOAL: ' + goals[goalIdx % goals.length].txt, W/2, H/2 + 165, 16, '#55efc4');
+    xpBar(H/2 + 178);
   } else {
     text('GAME OVER', W/2, H/2 - 50, 56, '#ff4d6d');
     text('Score ' + Math.floor(score), W/2, H/2 + 5, 34);
     text(Math.floor(score) >= best && score > 0 ? 'NEW BEST!' : 'So close! Only ' + (best - Math.floor(score)) + ' short of your best', W/2, H/2 + 45, 24, '#ffd34d');
     text('Tap or press Space to go again', W/2, H/2 + 90, 18, '#889');
-    text('Run #' + runs + '. The next one is the one!', W/2, H/2 + 120, 16, '#667');
+    text('+' + gained + ' XP' + (leveled ? '   LEVEL UP! New color unlocked!' : ''), W/2, H/2 + 125, 18, leveled ? '#55efc4' : '#8a8aa8');
+    xpBar(H/2 + 138);
+    text('LVL ' + level(xp) + '   Run #' + runs + '. The next one is the one!', W/2, H/2 + 170, 16, '#667');
   }
 }
 
