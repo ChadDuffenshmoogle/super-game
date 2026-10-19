@@ -28,7 +28,7 @@ addEventListener('keydown', e => { if (e.code === 'Space' || e.key === 'Enter') 
 
 // ---- Game state ----
 let state = 'menu', overAt = 0, last = 0;
-let p, orbs, haz, parts, rings;
+let p, orbs, haz, parts, rings, warns = [];
 let score, combo, comboT, t, spawnO, spawnH, collected, shake, best = 0;
 try { best = +localStorage.getItem('orbrush-best') || 0; } catch(e) {}
 
@@ -54,7 +54,7 @@ function press(){
 }
 
 function start(){
-  pops = [];
+  pops = []; warns = [];
   p = {x:mx, y:my, r:12};
   orbs = []; haz = []; parts = []; rings = [];
   score = 0; combo = 1; comboT = 0; t = 0; spawnO = 0; spawnH = 1; collected = 0; shake = 0;
@@ -110,15 +110,22 @@ function update(dt){
     else if (e === 1){ hx = W+30; hy = rand(0,H); }
     else if (e === 2){ hx = rand(0,W); hy = -30; }
     else { hx = rand(0,W); hy = H+30; }
-    const a = Math.atan2(p.y - hy + rand(-150,150), p.x - hx + rand(-150,150));
-    haz.push({x:hx, y:hy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:rand(11,20)});
+    if (Math.hypot(hx - p.x, hy - p.y) > 220){   // never spawn right on top of you
+      const a = Math.atan2(p.y - hy + rand(-150,150), p.x - hx + rand(-150,150));
+      warns.push({x:Math.min(W-14, Math.max(14, hx)), y:Math.min(H-14, Math.max(14, hy)),
+                  sx:hx, sy:hy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:rand(11,20), t:.9});
+    }
   }
+
+  // warnings turn into real enemies after a short countdown
+  for (const w of warns){ w.t -= dt; if (w.t <= 0) haz.push({x:w.sx, y:w.sy, vx:w.vx, vy:w.vy, r:w.r}); }
+  warns = warns.filter(w => w.t > 0);
 
   // hazards
   for (const h of haz){
     h.x += h.vx*dt; h.y += h.vy*dt;
     const d = Math.hypot(h.x-p.x, h.y-p.y);
-    if (d < h.r + p.r - 3){ die(); return; }
+    if (d < h.r + p.r - 6){ die(); return; }
     if (!h.near && d < h.r + p.r + 22){   // near miss = risky bonus
       h.near = true; score += 25 * combo; comboT = 3;
       pop(p.x, p.y - 30, 'CLOSE! +' + 25*combo, '#ff9ff3'); beep(900, .1, 'square');
@@ -182,6 +189,11 @@ function draw(){
       const pulse = 1 + Math.sin(performance.now()/120)*.18;
       glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : '#ffd34d');
     }
+    for (const w of warns){
+      x.globalAlpha = .4 + .6*Math.abs(Math.sin(w.t*14));
+      text('!', w.x, w.y + 9, 28, '#ff4d6d');
+    }
+    x.globalAlpha = 1;
     for (const h of haz) glowCircle(h.x, h.y, h.r, '#ff4d6d');
     for (const q of parts){ x.globalAlpha = Math.max(0, q.life); glowCircle(q.x, q.y, 3, q.col); }
     x.globalAlpha = 1;
@@ -191,16 +203,22 @@ function draw(){
   }
 
   x.setTransform(1,0,0,1,0,0);
+  text('v3', W - 10, H - 10, 12, '#555', 'right');
   if (state === 'play'){
     text(Math.floor(score), W/2, 60, 44);
     text('x' + combo, W/2, 95, 24, combo > 1 ? '#ffd34d' : '#888');
     x.fillStyle = '#ffd34d'; x.fillRect(W/2 - 60, 108, 120*Math.max(0, comboT)/3, 5);
-    text('Pulse in ' + (8 - collected%8) + ' orbs', W/2, H-24, 16, '#8a8aa8');
+    const ch = collected % 8;
+    x.fillStyle = '#223'; x.fillRect(W/2 - 100, H - 40, 200, 10);
+    x.fillStyle = '#6cf'; x.fillRect(W/2 - 100, H - 40, 200*ch/8, 10);
+    text(ch === 7 ? 'ONE MORE ORB = PULSE BLAST!' : 'PULSE CHARGE: at 8 orbs, every red orb explodes', W/2, H - 48, 14, ch === 7 ? '#6cf' : '#8a8aa8');
   } else if (state === 'menu'){
     text('ORB RUSH', W/2, H/2 - 40, 64, '#6cf');
     text('Move to collect gold orbs. Dodge the red ones.', W/2, H/2 + 5, 20, '#aab');
     text('Chain orbs for bigger combos. Tap or press Space to start.', W/2, H/2 + 35, 18, '#889');
-    if (best) text('Best: ' + best, W/2, H/2 + 80, 22, '#ffd34d');
+    text('Every 8 orbs = PULSE: a blast that wipes out all red orbs!', W/2, H/2 + 65, 18, '#6cf');
+    text('Watch for the red "!" marks: enemies appear there.', W/2, H/2 + 92, 16, '#ff4d6d');
+    if (best) text('Best: ' + best, W/2, H/2 + 130, 22, '#ffd34d');
   } else {
     text('GAME OVER', W/2, H/2 - 50, 56, '#ff4d6d');
     text('Score ' + Math.floor(score), W/2, H/2 + 5, 34);
