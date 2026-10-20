@@ -37,7 +37,7 @@ addEventListener('keydown', e => {
 let state = 'menu', overAt = 0, last = 0, runs = 0, slow = 0, beat = false;
 let streak = 0, dailyBonus = 0, beatT = 0, dashT = 0, dashCd = 0, goldRush = false, frozen = 0, shownScore = 0, nextMile = 500, ach = [], dblT = 0, chain = 0, bigMag = false, perfect = 0, lasers = [], lsT = 12, musT = 0, nmT = 0, nmC = 0, lucky = 1;
 let coins = 0, coinsGot = 0, lives = 0, inv = 0, skinSel = 0, own = [0], up = {dash:0, mag:0, score:0, shield:0, life:0, ctime:0};
-let wave = 0, smashN = 0, smashTot = 0, goldT = 0, magT = 0, top = [], rankPos = 0;
+let wave = 0, smashN = 0, smashTot = 0, goldT = 0, magT = 0, topRuns = [], rankPos = 0;
 let xp = 0, goalIdx = 0, goalDone = false, jps = 0, nears = 0, pulses = 0, maxCombo = 1;
 let xpBonus = 0, gained = 0, leveled = false, shield = false, evT = 20, swarm = 0, banner = '', bannerT = 0;
 let p, orbs, haz, parts, rings, warns = [];
@@ -49,7 +49,7 @@ try { best = +localStorage.getItem('orbrush-best') || 0; runs = +localStorage.ge
   ach = (localStorage.getItem('orbrush-ach') || '').split(',').filter(Boolean).map(Number);
   const sv = JSON.parse(localStorage.getItem('orbrush-shop') || 'null');
   if (sv){ coins = sv.coins || 0; up = Object.assign(up, sv.up); own = sv.own || [0]; skinSel = sv.skinSel || 0; }
-  top = JSON.parse(localStorage.getItem('orbrush-top') || '[]');
+  topRuns = JSON.parse(localStorage.getItem('orbrush-topRuns') || '[]');
   if (lastDay !== today){   // first visit today: grow the streak and earn a bonus
     const yest = new Date(Date.now() - 864e5).toDateString();
     streak = lastDay === yest ? streak + 1 : 1;
@@ -267,9 +267,9 @@ function die(){
   try { localStorage.setItem('orbrush-xp', xp); } catch(e) {}
   coinsGot = (Math.floor(score/25) + Math.floor(collected/2) + maxCombo*3) * lucky + (leveled ? 100 : 0);
   coins += coinsGot; save();
-  top.push(Math.floor(score)); top.sort((a, b) => b - a); top = top.slice(0, 5);
-  rankPos = top.indexOf(Math.floor(score)) + 1;   // 0 means not in the top 5
-  try { localStorage.setItem('orbrush-top', JSON.stringify(top)); } catch(e) {}
+  topRuns.push(Math.floor(score)); topRuns.sort((a, b) => b - a); topRuns = topRuns.slice(0, 5);
+  rankPos = topRuns.indexOf(Math.floor(score)) + 1;   // 0 means not in the topRuns 5
+  try { localStorage.setItem('orbrush-topRuns', JSON.stringify(topRuns)); } catch(e) {}
   return true;
   burst(p.x, p.y, myColor(), 100);
   if (score > best){
@@ -321,7 +321,7 @@ function update(dt){
     else if (e === 1){ hx = W+30; hy = rand(0,H); }
     else if (e === 2){ hx = rand(0,W); hy = -30; }
     else { hx = rand(0,W); hy = H+30; }
-    if (Math.hypot(hx - p.x, hy - p.y) > 220){   // never spawn right on top of you
+    if (Math.hypot(hx - p.x, hy - p.y) > 220){   // never spawn right on topRuns of you
       const a = Math.atan2(p.y - hy + rand(-60,60), p.x - hx + rand(-60,60));
       warns.push({x:Math.min(W-14, Math.max(14, hx)), y:Math.min(H-14, Math.max(14, hy)),
                   sx:hx, sy:hy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:rand(11,20), t:.75, elite: t > 45 && Math.random() < .08, chase: t > 15 && Math.random() < .25, zig: t > 8 && Math.random() < .2, ph: rand(0, 6.28), split: t > 12 && Math.random() < .15});
@@ -641,7 +641,7 @@ function draw(){
     text('Collect the round glowing orbs. Dodge anything SPIKY and RED!', W/2, H/2 + 5, 20, '#aab');
     text('Tap/Space to start, then to DASH and smash enemies!', W/2, H/2 + 35, 18, '#889');
     if (best) text('Best: ' + best, W/2, H/2 + 130, 22, '#ffd34d');
-    if (top.length){ text('TOP RUNS', W/2, 36, 14, '#889'); top.forEach((v, i) => text('#' + (i + 1) + '  ' + v, W/2, 56 + i*18, 14, i === 0 ? '#ffd34d' : '#aab')); }
+    if (topRuns.length){ text('TOP RUNS', W/2, 36, 14, '#889'); topRuns.forEach((v, i) => text('#' + (i + 1) + '  ' + v, W/2, 56 + i*18, 14, i === 0 ? '#ffd34d' : '#aab')); }
     drawBtn();
   } else {
     text('GAME OVER', W/2, H/2 - 50, 56, '#ff4d6d');
@@ -659,6 +659,7 @@ function draw(){
 
 function loop(ts){
   let dt = Math.min((ts - last)/1000, .05); last = ts;
+  c.style.cursor = state === 'play' ? 'none' : 'default';
   if (slow > 0){ slow -= dt; dt *= .25; }   // slow-motion after a pulse
   update(dt); draw();
   requestAnimationFrame(loop);
