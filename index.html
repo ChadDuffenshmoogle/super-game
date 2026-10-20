@@ -163,6 +163,7 @@ function die(){
   const before = level(xp);
   gained = Math.floor(score/5) + xpBonus + dailyBonus; dailyBonus = 0; xp += gained;
   leveled = level(xp) > before;
+  if (leveled) [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, .3, 'triangle'), 400 + i*120));
   try { localStorage.setItem('orbrush-xp', xp); } catch(e) {}
   burst(p.x, p.y, skins[(level(xp) - 1) % skins.length], 100);
   if (score > best){
@@ -184,6 +185,7 @@ function update(dt){
   if (state !== 'play') return;
 
   t += dt;
+  score += dt * 3 * combo;   // surviving earns points
   dashT -= dt; dashCd -= dt;
   const k = Math.min(1, dt * (dashT > 0 ? 40 : 14));   // dashing = much faster follow
   p.x += (mx - p.x) * k;
@@ -200,7 +202,7 @@ function update(dt){
     orbs.push({x: hz ? Math.min(W-30, Math.max(30, hz.x + rand(-70, 70))) : rand(40, W-40),
                y: hz ? Math.min(H-30, Math.max(60, hz.y + rand(-70, 70))) : rand(70, H-40),
                r:jp ? 15 : 10, life:jp ? 3 : 4, jp, sh, risk: !!hz,
-               fr: !jp && !sh && Math.random() < .08, dp: !jp && !sh && Math.random() < .06});
+               fr: !jp && !sh && Math.random() < .08, dp: !jp && !sh && Math.random() < .06, dc: !jp && !sh && Math.random() < .07});
   }
 
   // spawn hazards (faster and faster)
@@ -216,12 +218,12 @@ function update(dt){
     if (Math.hypot(hx - p.x, hy - p.y) > 220){   // never spawn right on top of you
       const a = Math.atan2(p.y - hy + rand(-150,150), p.x - hx + rand(-150,150));
       warns.push({x:Math.min(W-14, Math.max(14, hx)), y:Math.min(H-14, Math.max(14, hy)),
-                  sx:hx, sy:hy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:rand(11,20), t:.9, chase: t > 25 && Math.random() < .25, zig: t > 15 && Math.random() < .2, ph: rand(0, 6.28)});
+                  sx:hx, sy:hy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:rand(11,20), t:.9, chase: t > 25 && Math.random() < .25, zig: t > 15 && Math.random() < .2, ph: rand(0, 6.28), split: t > 20 && Math.random() < .15});
     }
   }
 
   // warnings turn into real enemies after a short countdown
-  for (const w of warns){ w.t -= dt; if (w.t <= 0) haz.push({x:w.sx, y:w.sy, vx:w.vx, vy:w.vy, r:w.r, chase:w.chase, zig:w.zig, ph:w.ph, life:8}); }
+  for (const w of warns){ w.t -= dt; if (w.t <= 0) haz.push({x:w.sx, y:w.sy, vx:w.vx, vy:w.vy, r:w.r, chase:w.chase, zig:w.zig, ph:w.ph, split:w.split, life:8}); }
   warns = warns.filter(w => w.t > 0);
 
   // hazards
@@ -236,6 +238,12 @@ function update(dt){
     }
     const fz = frozen > 0 ? 0 : 1;   // freeze orb stops every enemy
     h.x += h.vx*dt*fz; h.y += h.vy*dt*fz;
+    h.age = (h.age || 0) + dt;
+    if (h.split && h.age > 1.6 && h.r > 9){   // splitters break into two smaller enemies
+      const sa = Math.atan2(h.vy, h.vx), ss = Math.hypot(h.vx, h.vy);
+      for (const d of [-.7, .7]) haz.push({x:h.x, y:h.y, vx:Math.cos(sa + d)*ss, vy:Math.sin(sa + d)*ss, r:h.r*.65});
+      burst(h.x, h.y, '#fff', 12); h.x = -999;
+    }
     if (h.zig && !h.chase){   // zigzag enemies wobble side to side
       const zs = Math.hypot(h.vx, h.vy) || 1, wob = Math.sin(t*6 + h.ph) * 140 * dt * fz;
       h.x += -h.vy/zs * wob; h.y += h.vx/zs * wob;
@@ -245,7 +253,7 @@ function update(dt){
       const sg = (h.giant ? 500 : 40) * combo;
       score += sg; comboT = 3;
       pop(h.x, h.y, (h.giant ? 'GIANT SMASHED! +' : 'SMASH! +') + sg, '#fff');
-      burst(h.x, h.y, '#ff4d6d', h.giant ? 70 : 25); beep(500, .1, 'square');
+      burst(h.x, h.y, '#fff', h.giant ? 70 : 25); beep(500, .1, 'square');
       shake = h.giant ? 30 : 10; if (h.giant) slow = .6;
       h.x = -999; h.vx = 0; h.vy = 0;
       continue;
@@ -277,6 +285,7 @@ function update(dt){
       const gain = (o.jp ? 50 : 10) * combo * (combo === 10 ? 2 : 1) * (goldRush ? 2 : 1) * (dblT > 0 ? 2 : 1) * (o.risk ? 3 : 1);
       score += gain;
       pop(o.x, o.y, (o.jp ? 'JACKPOT +' : '+') + gain, o.jp ? '#ff9ff3' : '#ffd34d');
+      if (o.dc){ dashCd = 0; pop(o.x, o.y - 30, 'DASH READY!', '#55efc4'); beep(1100, .15, 'triangle'); }
       if (o.dp){ dblT = 8; pop(o.x, o.y - 30, '2x POINTS!', '#ffa'); beep(880, .2, 'triangle'); }
       if (o.fr){ frozen = 4; pop(o.x, o.y - 30, 'FREEZE!', '#bff'); sweep(1200, 300, .4, 'triangle', .12); }
       if (o.sh){ shield = true; pop(o.x, o.y - 30, 'SHIELD!', '#6cf'); beep(500, .2, 'triangle'); }
@@ -289,7 +298,7 @@ function update(dt){
       if (collected % 8 === 0){            // POWER PULSE: wipes every hazard
         rings.push({r:0, a:1});
         pulses++; pulseSfx(); slow = .5; pop(p.x, p.y - 50, 'PULSE!', '#6cf');
-        for (const h of haz) burst(h.x, h.y, '#ff4d6d', 12);
+        for (const h of haz) burst(h.x, h.y, '#fff', 12);
         haz = [];
         score += 50 * combo;
         shake = 26;
@@ -381,6 +390,21 @@ function text(s, px, py, size, col, align){
   x.fillText(s, px, py);
 }
 
+// Enemies are SPIKY and RED with a dark center. Orbs are always smooth circles.
+function drawEnemy(h, col){
+  const spikes = h.split ? 5 : 8;
+  x.save(); x.translate(h.x, h.y); x.rotate(performance.now()/400);
+  x.shadowColor = col; x.shadowBlur = 18; x.fillStyle = col;
+  x.beginPath();
+  for (let i = 0; i < spikes*2; i++){
+    const a = i*Math.PI/spikes, rr = i % 2 ? h.r*.7 : h.r*1.15;
+    x.lineTo(Math.cos(a)*rr, Math.sin(a)*rr);
+  }
+  x.closePath(); x.fill(); x.shadowBlur = 0;
+  x.fillStyle = '#300'; x.beginPath(); x.arc(0, 0, h.r*.4, 0, 6.283); x.fill();
+  x.restore();
+}
+
 function glowCircle(px, py, r, col){
   x.shadowColor = col; x.shadowBlur = 20; x.fillStyle = col;
   x.beginPath(); x.arc(px, py, r, 0, 6.283); x.fill();
@@ -408,8 +432,8 @@ function draw(){
   if (state !== 'menu'){
     for (const o of orbs){
       const pulse = 1 + Math.sin(performance.now()/120)*.18;
-      glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : (o.jp ? '#ff9ff3' : o.dp ? '#ffa' : o.fr ? '#bff' : o.sh ? '#6cf' : '#ffd34d'));
-      if (o.risk){ x.strokeStyle = '#ff4d6d'; x.lineWidth = 2; x.beginPath(); x.arc(o.x, o.y, o.r*pulse + 7, 0, 6.283); x.stroke(); }
+      glowCircle(o.x, o.y, o.r*pulse, o.life < 1.2 && Math.floor(o.life*8)%2 ? '#fff' : (o.jp ? '#ff9ff3' : o.dc ? '#55efc4' : o.dp ? '#ffa' : o.fr ? '#bff' : o.sh ? '#6cf' : '#ffd34d'));
+      if (o.risk){ x.strokeStyle = '#fff'; x.lineWidth = 2; x.beginPath(); x.arc(o.x, o.y, o.r*pulse + 7, 0, 6.283); x.stroke(); }
     }
     for (const w of warns){
       x.globalAlpha = .4 + .6*Math.abs(Math.sin(w.t*14));
@@ -423,7 +447,7 @@ function draw(){
       if (l.v){ x.moveTo(l.pos, 0); x.lineTo(l.pos, H); } else { x.moveTo(0, l.pos); x.lineTo(W, l.pos); }
       x.stroke(); x.shadowBlur = 0;
     }
-    for (const h of haz) glowCircle(h.x, h.y, h.r, frozen > 0 ? '#ff9aa8' : '#ff4d6d');
+    for (const h of haz) drawEnemy(h, frozen > 0 ? '#a33' : '#ff4d6d');
     for (const q of parts){ x.globalAlpha = Math.max(0, q.life); glowCircle(q.x, q.y, 3, q.col); }
     x.globalAlpha = 1;
     for (const f of pops){ x.globalAlpha = Math.max(0, f.life); text(f.s, f.x, f.y - (1 - f.life)*40, 22, f.col); }
@@ -443,7 +467,7 @@ function draw(){
   }
 
   x.setTransform(1,0,0,1,0,0);
-  text('v11', W - 10, H - 10, 12, '#555', 'right');
+  text('v12', W - 10, H - 10, 12, '#555', 'right');
   if (state === 'play'){
     text(Math.floor(score), W/2, 60, 44);
     text(combo === 10 ? 'FEVER! DOUBLE POINTS' : 'x' + combo, W/2, 95, 24, combo > 1 ? '#ffd34d' : '#888');
@@ -464,7 +488,7 @@ function draw(){
     text(ch === 7 ? 'ONE MORE ORB = PULSE BLAST!' : 'PULSE CHARGE: at 8 orbs, every red orb explodes', W/2, H - 48, 14, ch === 7 ? '#6cf' : '#8a8aa8');
   } else if (state === 'menu'){
     text('ORB RUSH', W/2, H/2 - 40, 64, '#6cf');
-    text('Move to collect gold orbs. Dodge the red ones.', W/2, H/2 + 5, 20, '#aab');
+    text('Collect the round glowing orbs. Dodge anything SPIKY and RED!', W/2, H/2 + 5, 20, '#aab');
     text('Tap/Space to start, then to DASH and smash enemies!', W/2, H/2 + 35, 18, '#889');
     if (best) text('Best: ' + best, W/2, H/2 + 130, 22, '#ffd34d');
   } else {
@@ -474,6 +498,7 @@ function draw(){
     text('Tap or press Space to go again', W/2, H/2 + 90, 18, '#889');
     text('+' + gained + ' XP' + (leveled ? '   LEVEL UP! New color unlocked!' : ''), W/2, H/2 + 125, 18, leveled ? '#55efc4' : '#8a8aa8');
     xpBar(H/2 + 138);
+    text('NEXT GOAL: ' + goals[goalIdx % goals.length].txt, W/2, H/2 + 195, 16, '#55efc4');
     glowCircle(W/2 + 122, H/2 + 142, 8, skins[level(xp) % skins.length]);   // next color to unlock
     text('LVL ' + level(xp) + ' ' + rank() + '   Run #' + runs + '. The next one is the one!', W/2, H/2 + 170, 16, '#667');
   }
